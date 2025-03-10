@@ -38,3 +38,4 @@ gst-template
 .cache
 *.tmp
 *.png
+libfacedetection

@@ -4,9 +4,13 @@ project(gstreamer)
 add_executable(app main.cpp)
 set(CMAKE_CXX_STANDARD 20)
 
+set(CMAKE_PREFIX_PATH "$ENV{facedetection_DIR}" ${CMAKE_PREFIX_PATH})
+set(CMAKE_PREFIX_PATH "${facedetection_DIR}" ${CMAKE_PREFIX_PATH})
+
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
-find_package(facedetection REQUIRED)
+find_package(facedetection REQUIRED PATHS "$ENV{facedetection_DIR}" NO_DEFAULT_PATH)
+
 pkg_check_modules(gtk3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0>=1.4)
 pkg_search_module(gstreamer-sdp REQUIRED IMPORTED_TARGET gstreamer-sdp-1.0>=1.4)
