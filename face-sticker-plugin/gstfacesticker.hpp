@@ -61,3 +61,16 @@ struct _GstFaceSticker {
 G_END_DECLS
 
 #endif /* __GST_FACESTICKER_H__ */
+
+typedef struct {
+  int confidence;
+  int x;
+  int y;
+  int width;
+  int height;
+  cv::Point leftEye;
+  cv::Point rightEye;
+  cv::Point nose;
+  cv::Point leftMouth;
+  cv::Point rightMouth;
+} FacialData;

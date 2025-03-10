@@ -96,11 +96,12 @@ static void process_face_detection(GstFaceSticker *filter, cv::Mat &frame_mat);
 static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
                                short *facial_landmarks, int x, int y, int w,
                                int h);
+static FacialData extract_facial_data(short *facial_landmarks);
 
-/* GObject vmethod implementations */
+    /* GObject vmethod implementations */
 
-/* initialize the plugin's class */
-static void gst_face_sticker_class_init(GstFaceStickerClass *klass) {
+    /* initialize the plugin's class */
+    static void gst_face_sticker_class_init(GstFaceStickerClass *klass) {
   GObjectClass *gobject_class;
   GstElementClass *gstelement_class;
   GstBaseTransformClass *base_transform_class;
@@ -272,13 +273,12 @@ static void gst_face_sticker_get_property(GObject *object, guint prop_id,
 }
 
 static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
-                               short *facial_landmarks, int x, int y, int w,
-                               int h) {
+                               const FacialData &face) {
   if (filter->eye_img.empty()) {
-    cv::circle(frame_mat, cv::Point(facial_landmarks[0], facial_landmarks[1]),
-               1, cv::Scalar(255, 0, 0), 2); // left eye
-    cv::circle(frame_mat, cv::Point(facial_landmarks[2], facial_landmarks[3]),
-               1, cv::Scalar(0, 0, 255), 2); // right eye
+    cv::circle(frame_mat, face.leftEye, 1, cv::Scalar(255, 0, 0),
+               2); // left eye
+    cv::circle(frame_mat, face.rightEye, 1, cv::Scalar(0, 0, 255),
+               2); // right eye
     return;
   }
 
@@ -287,14 +287,15 @@ static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
   cv::Rect roi_left_eye, roi_right_eye;
 
   cv::resize(filter->eye_img, eye_img_resized,
-             cv::Size(w * filter->eye_img_scale, h * filter->eye_img_scale));
+             cv::Size(face.width * filter->eye_img_scale,
+                      face.height * filter->eye_img_scale));
 
   cvtColor(eye_img_resized, eye_mask, cv::COLOR_BGR2GRAY);
 
-  int left_eye_x = facial_landmarks[0] - (eye_img_resized.cols / 2);
-  int left_eye_y = facial_landmarks[1] - (eye_img_resized.rows / 2);
-  int right_eye_x = facial_landmarks[2] - (eye_img_resized.cols / 2);
-  int right_eye_y = facial_landmarks[3] - (eye_img_resized.rows / 2);
+  int left_eye_x = face.leftEye.x - (eye_img_resized.cols / 2);
+  int left_eye_y = face.leftEye.y - (eye_img_resized.rows / 2);
+  int right_eye_x = face.rightEye.x - (eye_img_resized.cols / 2);
+  int right_eye_y = face.rightEye.y - (eye_img_resized.rows / 2);
 
   left_eye_x =
       std::max(0, std::min(left_eye_x, frame_mat.cols - eye_img_resized.cols));
@@ -335,38 +336,54 @@ static void process_face_detection(GstFaceSticker *filter, cv::Mat &frame_mat) {
   int num_faces = p_results ? *p_results : 0;
 
   for (int i = 0; i < num_faces; i++) {
-    short *facial_data = ((short *)(p_results + 1)) + 16 * i;
+    short *facial_landmarks = ((short *)(p_results + 1)) + 16 * i;
 
-    int confidence = facial_data[0];
-    int x = facial_data[1];
-    int y = facial_data[2];
-    int w = facial_data[3];
-    int h = facial_data[4];
+    FacialData face = extract_facial_data(facial_landmarks);
 
-    cv::putText(frame_mat, std::to_string(confidence), cv::Point(x, y - 3),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+    cv::putText(frame_mat, std::to_string(face.confidence),
+                cv::Point(face.x, face.y - 3), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                cv::Scalar(0, 255, 0), 1);
 
-    rectangle(frame_mat, cv::Rect(x, y, w, h), cv::Scalar(0, 255, 0), 2);
+    rectangle(frame_mat, cv::Rect(face.x, face.y, face.width, face.height),
+              cv::Scalar(0, 255, 0), 2);
 
-    cv::circle(frame_mat, cv::Point(facial_data[5 + 4], facial_data[5 + 5]), 1,
-               cv::Scalar(0, 255, 0), 2); // nose
-    cv::circle(frame_mat, cv::Point(facial_data[5 + 6], facial_data[5 + 7]), 1,
-               cv::Scalar(255, 0, 255), 2); // left mouth
-    cv::circle(frame_mat, cv::Point(facial_data[5 + 8], facial_data[5 + 9]), 1,
-               cv::Scalar(0, 255, 255), 2); // right mouth
+    cv::circle(frame_mat, face.nose, 1, cv::Scalar(0, 255, 0), 2); // nose
+    cv::circle(frame_mat, face.leftMouth, 1, cv::Scalar(255, 0, 255),
+               2); // left mouth
+    cv::circle(frame_mat, face.rightMouth, 1, cv::Scalar(0, 255, 255),
+               2); // right mouth
 
-    apply_eye_stickers(filter, frame_mat, &facial_data[5], x, y, w, h);
+    apply_eye_stickers(filter, frame_mat, face);
 
     if (!filter->silent) {
       GST_LOG_OBJECT(filter,
                      "Face %d: confidence=%d, [%d, %d, %d, %d] (%d,%d) (%d,%d) "
                      "(%d,%d) (%d,%d) (%d,%d)",
-                     i, confidence, x, y, w, h, facial_data[5], facial_data[6],
-                     facial_data[7], facial_data[8], facial_data[9],
-                     facial_data[10], facial_data[11], facial_data[12],
-                     facial_data[13], facial_data[14]);
+                     i, face.confidence, face.x, face.y, face.width,
+                     face.height, face.leftEye.x, face.leftEye.y,
+                     face.rightEye.x, face.rightEye.y, face.nose.x, face.nose.y,
+                     face.leftMouth.x, face.leftMouth.y, face.rightMouth.x,
+                     face.rightMouth.y);
     }
   }
+}
+
+static FacialData extract_facial_data(short *facial_landmarks) {
+  FacialData face;
+
+  face.confidence = facial_landmarks[0];
+  face.x = facial_landmarks[1];
+  face.y = facial_landmarks[2];
+  face.width = facial_landmarks[3];
+  face.height = facial_landmarks[4];
+
+  face.leftEye = cv::Point(facial_landmarks[5], facial_landmarks[6]);
+  face.rightEye = cv::Point(facial_landmarks[7], facial_landmarks[8]);
+  face.nose = cv::Point(facial_landmarks[9], facial_landmarks[10]);
+  face.leftMouth = cv::Point(facial_landmarks[11], facial_landmarks[12]);
+  face.rightMouth = cv::Point(facial_landmarks[13], facial_landmarks[14]);
+
+  return face;
 }
 
 /* GstBaseTransform vmethod implementations */
