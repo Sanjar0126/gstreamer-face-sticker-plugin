@@ -63,14 +63,15 @@ GST_PLUGIN_PATH=/path/to/gstream-face-sticker/build
 To run the application pipeline using `gst-launch-1.0`, use the following command:
 
 ```bash
-gst-launch-1.0 v4l2src ! videoconvert !  face_sticker silent=TRUE eye_img_path="./emoji.png" eye_img_scale=0.3 ! videoconvert ! xvimagesink sync=false
+gst-launch-1.0 v4l2src ! videoconvert !  face_sticker silent=TRUE eye_img_path="./emoji.png" eye_img_scale=0.3 min_confidence=65 ! videoconvert ! xvimagesink sync=false
 ```
 
 ### Parameters:
 
+- `silent` → Verbose logs, TRUE/FALSE (default FALSE)
 - `eye_img_path` → Path to the mask image (e.g., `./emoji.png`)
-- `eye_img_scale` → Scale factor for the mask overlay
-
+- `eye_img_scale` → Scale factor for the mask overlay (default 1.0)
+- `min_confidence` → Minimum confidence level for face detection (default 50, min 0, max 100)
 
 ## 6. Troubleshooting
 

@@ -38,6 +38,10 @@
 
 #define DETECT_BUFFER_SIZE 0x9000
 
+// Default values for properties
+#define DEFAULT_EYE_IMG_SCALE 1.0f
+#define DEFAULT_MIN_CONFIDENCE 50
+
 G_BEGIN_DECLS
 
 #define GST_TYPE_FACESTICKER (gst_face_sticker_get_type())
@@ -47,8 +51,10 @@ G_DECLARE_FINAL_TYPE(GstFaceSticker, gst_face_sticker, GST, FACESTICKER,
 struct _GstFaceSticker {
   GstBaseTransform element;
 
+  gint min_confidence;
+
   gboolean silent;
-  gchar* eye_img_path;
+  gchar *eye_img_path;
   gfloat eye_img_scale;
   cv::Mat eye_img;
 

@@ -49,9 +49,6 @@
 GST_DEBUG_CATEGORY_STATIC(gst_face_sticker_debug);
 #define GST_CAT_DEFAULT gst_face_sticker_debug
 
-// Default values for properties
-#define DEFAULT_EYE_IMG_SCALE 1.0f
-
 /* Filter signals and args */
 enum {
   /* FILL ME */
@@ -63,6 +60,7 @@ enum {
   PROP_SILENT,
   PROP_EYEIMG_PATH,
   PROP_EYEIMG_SCALE,
+  PROP_MIN_CONFIDENCE,
 };
 
 /* the capabilities of the inputs and outputs.
@@ -152,6 +150,12 @@ static void gst_face_sticker_class_init(GstFaceStickerClass *klass) {
                          G_MAXFLOAT, DEFAULT_EYE_IMG_SCALE,
                          (GParamFlags)(G_PARAM_READWRITE)));
 
+  g_object_class_install_property(
+      gobject_class, PROP_MIN_CONFIDENCE,
+      g_param_spec_int("min_confidence", "Minimum confidence",
+                       "Minimum confidence level for face detection", 0, 100,
+                       DEFAULT_MIN_CONFIDENCE, (GParamFlags)(G_PARAM_READWRITE)));
+
   gst_element_class_set_details_simple(
       gstelement_class, "FaceSticker", "Filter/Effect/Video",
       "Detects faces and applies stickers over eye regions",
@@ -199,6 +203,8 @@ static void gst_face_sticker_init(GstFaceSticker *filter) {
   filter->silent = FALSE;
   filter->eye_img_path = NULL;
   filter->eye_img_scale = DEFAULT_EYE_IMG_SCALE;
+
+  filter->min_confidence = DEFAULT_MIN_CONFIDENCE;
 
   filter->face_detection_buffer = (unsigned char *)malloc(DETECT_BUFFER_SIZE);
   if (!filter->face_detection_buffer) {
@@ -258,6 +264,11 @@ static void gst_face_sticker_set_property(GObject *object, guint prop_id,
                      filter->eye_img_scale);
     break;
 
+  case PROP_MIN_CONFIDENCE:
+    filter->min_confidence = g_value_get_int(value);
+    GST_DEBUG_OBJECT(filter, "Minimum confidence set to %d",
+                     filter->min_confidence);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -280,7 +291,9 @@ static void gst_face_sticker_get_property(GObject *object, guint prop_id,
   case PROP_EYEIMG_SCALE:
     g_value_set_float(value, filter->eye_img_scale);
     break;
-
+  case PROP_MIN_CONFIDENCE:
+    g_value_set_int(value, filter->min_confidence);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -396,9 +409,11 @@ static void process_face_detection(GstFaceSticker *filter, cv::Mat &frame_mat) {
 
     FacialData face = extract_facial_data(facial_landmarks);
 
-    draw_facial_landmarks(frame_mat, face, filter->silent);
-    apply_eye_stickers(filter, frame_mat, face);
-    log_face_data(filter, i, face);
+    if (face.confidence > filter->min_confidence) {
+      draw_facial_landmarks(frame_mat, face, filter->silent);
+      apply_eye_stickers(filter, frame_mat, face);
+      log_face_data(filter, i, face);
+    }
   }
 }
 
