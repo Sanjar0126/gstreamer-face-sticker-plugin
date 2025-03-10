@@ -93,15 +93,30 @@ static gboolean gst_face_sticker_set_caps(GstBaseTransform *trans,
 static GstFlowReturn gst_face_sticker_transform_ip(GstBaseTransform *base,
                                                    GstBuffer *outbuf);
 static void process_face_detection(GstFaceSticker *filter, cv::Mat &frame_mat);
+static void draw_facial_landmarks(cv::Mat &frame_mat, const FacialData &face,
+                                  gboolean silent);
+static void draw_face_rectangle(cv::Mat &frame_mat, const FacialData &face);
+static void draw_face_confidence(cv::Mat &frame_mat, const FacialData &face);
+static void log_face_data(GstFaceSticker *filter, int face_index,
+                          const FacialData &face);
 static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
-                               short *facial_landmarks, int x, int y, int w,
-                               int h);
+                               const FacialData &face);
+static void draw_default_eye_markers(cv::Mat &frame_mat,
+                                     const FacialData &face);
+static void apply_eye_image_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
+                                     const FacialData &face);
+static cv::Rect calculate_eye_roi(const cv::Point &eye_center,
+                                  const cv::Mat &eye_img, int frame_width,
+                                  int frame_height);
+static void apply_eye_image_to_roi(cv::Mat &frame_mat, const cv::Mat &eye_img,
+                                   const cv::Mat &eye_mask,
+                                   const cv::Rect &roi);
 static FacialData extract_facial_data(short *facial_landmarks);
 
-    /* GObject vmethod implementations */
+/* GObject vmethod implementations */
 
-    /* initialize the plugin's class */
-    static void gst_face_sticker_class_init(GstFaceStickerClass *klass) {
+/* initialize the plugin's class */
+static void gst_face_sticker_class_init(GstFaceStickerClass *klass) {
   GObjectClass *gobject_class;
   GstElementClass *gstelement_class;
   GstBaseTransformClass *base_transform_class;
@@ -272,19 +287,39 @@ static void gst_face_sticker_get_property(GObject *object, guint prop_id,
   }
 }
 
-static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
-                               const FacialData &face) {
-  if (filter->eye_img.empty()) {
-    cv::circle(frame_mat, face.leftEye, 1, cv::Scalar(255, 0, 0),
-               2); // left eye
-    cv::circle(frame_mat, face.rightEye, 1, cv::Scalar(0, 0, 255),
-               2); // right eye
-    return;
-  }
+static void draw_default_eye_markers(cv::Mat &frame_mat,
+                                     const FacialData &face) {
+  cv::circle(frame_mat, face.leftEye, 1, cv::Scalar(255, 0, 0), 2); // left eye
+  cv::circle(frame_mat, face.rightEye, 1, cv::Scalar(0, 0, 255),
+             2); // right eye
+}
 
+static cv::Rect calculate_eye_roi(const cv::Point &eye_center,
+                                  const cv::Mat &eye_img, int frame_width,
+                                  int frame_height) {
+  int eye_x = eye_center.x - (eye_img.cols / 2);
+  int eye_y = eye_center.y - (eye_img.rows / 2);
+
+  eye_x = std::max(0, std::min(eye_x, frame_width - eye_img.cols));
+  eye_y = std::max(0, std::min(eye_y, frame_height - eye_img.rows));
+
+  return cv::Rect(eye_x, eye_y, eye_img.cols, eye_img.rows);
+}
+
+static void apply_eye_image_to_roi(cv::Mat &frame_mat, const cv::Mat &eye_img,
+                                   const cv::Mat &eye_mask,
+                                   const cv::Rect &roi) {
+  if (roi.width > 0 && roi.height > 0 && roi.x >= 0 && roi.y >= 0 &&
+      roi.x + roi.width <= frame_mat.cols &&
+      roi.y + roi.height <= frame_mat.rows) {
+    eye_img.copyTo(frame_mat(roi), eye_mask != 255);
+  }
+}
+
+static void apply_eye_image_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
+                                     const FacialData &face) {
   cv::Mat eye_img_resized;
   cv::Mat eye_mask;
-  cv::Rect roi_left_eye, roi_right_eye;
 
   cv::resize(filter->eye_img, eye_img_resized,
              cv::Size(face.width * filter->eye_img_scale,
@@ -292,37 +327,58 @@ static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
 
   cvtColor(eye_img_resized, eye_mask, cv::COLOR_BGR2GRAY);
 
-  int left_eye_x = face.leftEye.x - (eye_img_resized.cols / 2);
-  int left_eye_y = face.leftEye.y - (eye_img_resized.rows / 2);
-  int right_eye_x = face.rightEye.x - (eye_img_resized.cols / 2);
-  int right_eye_y = face.rightEye.y - (eye_img_resized.rows / 2);
+  cv::Rect roi_left_eye = calculate_eye_roi(face.leftEye, eye_img_resized,
+                                            frame_mat.cols, frame_mat.rows);
+  cv::Rect roi_right_eye = calculate_eye_roi(face.rightEye, eye_img_resized,
+                                             frame_mat.cols, frame_mat.rows);
 
-  left_eye_x =
-      std::max(0, std::min(left_eye_x, frame_mat.cols - eye_img_resized.cols));
-  left_eye_y =
-      std::max(0, std::min(left_eye_y, frame_mat.rows - eye_img_resized.rows));
-  right_eye_x =
-      std::max(0, std::min(right_eye_x, frame_mat.cols - eye_img_resized.cols));
-  right_eye_y =
-      std::max(0, std::min(right_eye_y, frame_mat.rows - eye_img_resized.rows));
+  apply_eye_image_to_roi(frame_mat, eye_img_resized, eye_mask, roi_left_eye);
+  apply_eye_image_to_roi(frame_mat, eye_img_resized, eye_mask, roi_right_eye);
+}
 
-  roi_left_eye = cv::Rect(left_eye_x, left_eye_y, eye_img_resized.cols,
-                          eye_img_resized.rows);
-  roi_right_eye = cv::Rect(right_eye_x, right_eye_y, eye_img_resized.cols,
-                           eye_img_resized.rows);
-
-  if (roi_left_eye.width > 0 && roi_left_eye.height > 0 &&
-      roi_left_eye.x >= 0 && roi_left_eye.y >= 0 &&
-      roi_left_eye.x + roi_left_eye.width <= frame_mat.cols &&
-      roi_left_eye.y + roi_left_eye.height <= frame_mat.rows) {
-    eye_img_resized.copyTo(frame_mat(roi_left_eye), eye_mask != 255);
+static void apply_eye_stickers(GstFaceSticker *filter, cv::Mat &frame_mat,
+                               const FacialData &face) {
+  if (filter->eye_img.empty()) {
+    draw_default_eye_markers(frame_mat, face);
+    return;
   }
 
-  if (roi_right_eye.width > 0 && roi_right_eye.height > 0 &&
-      roi_right_eye.x >= 0 && roi_right_eye.y >= 0 &&
-      roi_right_eye.x + roi_right_eye.width <= frame_mat.cols &&
-      roi_right_eye.y + roi_right_eye.height <= frame_mat.rows) {
-    eye_img_resized.copyTo(frame_mat(roi_right_eye), eye_mask != 255);
+  apply_eye_image_stickers(filter, frame_mat, face);
+}
+
+static void draw_face_rectangle(cv::Mat &frame_mat, const FacialData &face) {
+  rectangle(frame_mat, cv::Rect(face.x, face.y, face.width, face.height),
+            cv::Scalar(0, 255, 0), 2);
+}
+
+static void draw_face_confidence(cv::Mat &frame_mat, const FacialData &face) {
+  cv::putText(frame_mat, std::to_string(face.confidence),
+              cv::Point(face.x, face.y - 3), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+              cv::Scalar(0, 255, 0), 1);
+}
+
+static void draw_facial_landmarks(cv::Mat &frame_mat, const FacialData &face,
+                                  gboolean silent) {
+  draw_face_confidence(frame_mat, face);
+  draw_face_rectangle(frame_mat, face);
+
+  cv::circle(frame_mat, face.nose, 1, cv::Scalar(0, 255, 0), 2); // nose
+  cv::circle(frame_mat, face.leftMouth, 1, cv::Scalar(255, 0, 255),
+             2); // left mouth
+  cv::circle(frame_mat, face.rightMouth, 1, cv::Scalar(0, 255, 255),
+             2); // right mouth
+}
+
+static void log_face_data(GstFaceSticker *filter, int face_index,
+                          const FacialData &face) {
+  if (!filter->silent) {
+    GST_LOG_OBJECT(filter,
+                   "Face %d: confidence=%d, [%d, %d, %d, %d] (%d,%d) (%d,%d) "
+                   "(%d,%d) (%d,%d) (%d,%d)",
+                   face_index, face.confidence, face.x, face.y, face.width,
+                   face.height, face.leftEye.x, face.leftEye.y, face.rightEye.x,
+                   face.rightEye.y, face.nose.x, face.nose.y, face.leftMouth.x,
+                   face.leftMouth.y, face.rightMouth.x, face.rightMouth.y);
   }
 }
 
@@ -340,31 +396,9 @@ static void process_face_detection(GstFaceSticker *filter, cv::Mat &frame_mat) {
 
     FacialData face = extract_facial_data(facial_landmarks);
 
-    cv::putText(frame_mat, std::to_string(face.confidence),
-                cv::Point(face.x, face.y - 3), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                cv::Scalar(0, 255, 0), 1);
-
-    rectangle(frame_mat, cv::Rect(face.x, face.y, face.width, face.height),
-              cv::Scalar(0, 255, 0), 2);
-
-    cv::circle(frame_mat, face.nose, 1, cv::Scalar(0, 255, 0), 2); // nose
-    cv::circle(frame_mat, face.leftMouth, 1, cv::Scalar(255, 0, 255),
-               2); // left mouth
-    cv::circle(frame_mat, face.rightMouth, 1, cv::Scalar(0, 255, 255),
-               2); // right mouth
-
+    draw_facial_landmarks(frame_mat, face, filter->silent);
     apply_eye_stickers(filter, frame_mat, face);
-
-    if (!filter->silent) {
-      GST_LOG_OBJECT(filter,
-                     "Face %d: confidence=%d, [%d, %d, %d, %d] (%d,%d) (%d,%d) "
-                     "(%d,%d) (%d,%d) (%d,%d)",
-                     i, face.confidence, face.x, face.y, face.width,
-                     face.height, face.leftEye.x, face.leftEye.y,
-                     face.rightEye.x, face.rightEye.y, face.nose.x, face.nose.y,
-                     face.leftMouth.x, face.leftMouth.y, face.rightMouth.x,
-                     face.rightMouth.y);
-    }
+    log_face_data(filter, i, face);
   }
 }
 
