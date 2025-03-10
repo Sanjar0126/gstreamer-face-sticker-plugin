@@ -66,6 +66,11 @@ To run the application pipeline using `gst-launch-1.0`, use the following comman
 gst-launch-1.0 v4l2src ! videoconvert !  face_sticker silent=TRUE eye_img_path="./emoji.png" eye_img_scale=0.3 min_confidence=65 ! videoconvert ! xvimagesink sync=false
 ```
 
+or run pipeline build/app file:
+```bash
+./build/app eye_img_path="./emoji.png" eye_img_scale=0.3 min_confidence=65
+```
+
 ### Parameters:
 
 - `silent` → Verbose logs, TRUE/FALSE (default FALSE)
