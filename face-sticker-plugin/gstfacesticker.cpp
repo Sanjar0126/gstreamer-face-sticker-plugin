@@ -400,7 +400,7 @@ static GstFlowReturn gst_face_sticker_transform_ip(GstBaseTransform *base,
     gst_object_sync_values(GST_OBJECT(filter), GST_BUFFER_TIMESTAMP(outbuf));
   }
 
-  map_flags = GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF;
+  map_flags = GST_MAP_READ | (GstMapFlags)GST_VIDEO_FRAME_MAP_FLAG_NO_REF;
   if (!gst_base_transform_is_passthrough(base)) {
     map_flags |= GST_MAP_WRITE;
   }
