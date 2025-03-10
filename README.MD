@@ -51,10 +51,11 @@ cmake --build build --config Release --target all --
 
 ## 4. Environment Variables
 
-Ensure that the `.env` file is updated with the correct `facedetection_DIR`:
+Ensure that the `.env` file is updated with the correct `facedetection_DIR` and `GST_PLUGIN_PATH`:
 
 ```bash
 facedetection_DIR=/path/to/libfacedetection/build
+GST_PLUGIN_PATH=/path/to/gstream-face-sticker/build
 ```
 
 ## 5. Run the Application
