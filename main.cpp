@@ -2,23 +2,33 @@
 #include <glib.h>
 #include <gst/gst.h>
 #include <gst/gstmessage.h>
+#include <map>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 
 typedef struct {
   GstElement *pipeline;
   GstElement *source;
   GstElement *videoconvert;
-  GstElement *buffer_filter;
-  GstElement *facedetect;
+  GstElement *facefilter_sticker;
   GstElement *videoconvert2;
   GstElement *videosink;
   GMainLoop *loop;
 } FaceDetectApp;
 
-static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data);
+typedef struct {
+  gboolean SILENT;
+  gchar* EYEIMG_PATH;
+  gfloat EYEIMG_SCALE;
+  gint MIN_CONFIDENCE;
+} Arguments;
+
+static Arguments parse_args(int argc, char *argv[]);
 
 int main(int argc, char *argv[]) {
+  Arguments args = parse_args(argc, argv);
+
   FaceDetectApp app = {0};
   GstBus *bus;
   GstStateChangeReturn ret;
@@ -30,40 +40,34 @@ int main(int argc, char *argv[]) {
   app.pipeline = gst_pipeline_new("face-detection-pipeline");
   app.source = gst_element_factory_make("v4l2src", "camera-source");
   app.videoconvert = gst_element_factory_make("videoconvert", "videoconvert");
-  app.buffer_filter = gst_element_factory_make("bufferfilter", "bufferfilter");
-  app.facedetect = gst_element_factory_make("facedetect", "facedetect");
+  app.facefilter_sticker =
+      gst_element_factory_make("face_sticker", "face_sticker");
   app.videoconvert2 = gst_element_factory_make("videoconvert", "videoconvert2");
   app.videosink = gst_element_factory_make("xvimagesink", "videosink");
 
-  if (!app.pipeline || !app.source || !app.videoconvert || !app.facedetect ||
-      !app.videoconvert2 || !app.videosink || !app.buffer_filter) {
+  if (!app.pipeline || !app.source || !app.videoconvert || !app.videoconvert2 ||
+      !app.videosink || !app.facefilter_sticker) {
     g_printerr("Some elements could not be created. Exiting.\n");
     return -1;
   }
 
-  g_object_set(app.buffer_filter, "silent", FALSE, NULL);
-  g_object_set(app.buffer_filter, "analysis-interval", 30, NULL); 
+  g_object_set(app.facefilter_sticker, "silent", args.SILENT, NULL);
+  g_object_set(app.facefilter_sticker, "eye_img_path", args.EYEIMG_PATH, NULL);
+  g_object_set(app.facefilter_sticker, "eye_img_scale", args.EYEIMG_SCALE, NULL);
+  g_object_set(app.facefilter_sticker, "min_confidence", args.MIN_CONFIDENCE, NULL);
   g_object_set(app.source, "device", "/dev/video0", NULL);
-  g_object_set(app.facedetect, "display", TRUE, NULL);
-  g_object_set(app.facedetect, "min-size-width", 30, NULL);
-  g_object_set(app.facedetect, "min-size-height", 30, NULL);
-  g_object_set(app.facedetect, "updates", 0, NULL);
-  g_object_set(app.videosink, "sync", FALSE, NULL); 
+  g_object_set(app.videosink, "sync", FALSE, NULL);
 
   gst_bin_add_many(GST_BIN(app.pipeline), app.source, app.videoconvert,
-                   app.buffer_filter, app.facedetect, 
-                   app.videoconvert2, app.videosink, NULL);
+                   app.facefilter_sticker, app.videoconvert2, app.videosink,
+                   NULL);
 
-  if (!gst_element_link_many(app.source, app.videoconvert, app.buffer_filter,
-                             app.facedetect, app.videoconvert2, 
+  if (!gst_element_link_many(app.source, app.videoconvert,
+                             app.facefilter_sticker, app.videoconvert2,
                              app.videosink, NULL)) {
     g_printerr("Elements could not be linked. Exiting.\n");
     return -1;
   }
-
-  bus = gst_pipeline_get_bus(GST_PIPELINE(app.pipeline));
-  gst_bus_add_watch(bus, bus_call, &app);
-  gst_object_unref(bus);
 
   g_print("Starting pipeline...\n");
   ret = gst_element_set_state(app.pipeline, GST_STATE_PLAYING);
@@ -83,68 +87,39 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data)
-{
-  FaceDetectApp *app = (FaceDetectApp *)data;
-  
-  switch (GST_MESSAGE_TYPE(msg)) {
-    case GST_MESSAGE_ERROR: {
-      GError *err;
-      gchar *debug;
-      
-      gst_message_parse_error(msg, &err, &debug);
-      g_printerr("Error: %s\n", err->message);
-      g_error_free(err);
-      g_free(debug);
-      
-      g_main_loop_quit(app->loop);
-      break;
+static Arguments parse_args(int argc, char *argv[]) {
+  Arguments args;
+  std::map<std::string, std::string> args_map;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    size_t pos = arg.find('=');
+
+    if (pos != std::string::npos) {
+      std::string key = arg.substr(0, pos);
+      std::string value = arg.substr(pos + 1);
+      args_map[key] = value;
     }
-    
-    case GST_MESSAGE_EOS:
-      g_print("End of stream\n");
-      g_main_loop_quit(app->loop);
-      break;
-      
-    case GST_MESSAGE_APPLICATION: {
-      const GstStructure *structure = gst_message_get_structure(msg);
-      
-      if (gst_structure_has_name(structure, "buffer-filter-caps")) {
-        const gchar *caps_str;
-        gint width, height;
-        
-        caps_str = gst_structure_get_string(structure, "caps");
-        if (caps_str && 
-            gst_structure_get_int(structure, "width", &width) &&
-            gst_structure_get_int(structure, "height", &height)) {
-          
-          g_print("BufferFilter: New video format: %dx%d\n", width, height);
-          g_print("  Caps: %s\n", caps_str);
-        }
-      }
-      else if (gst_structure_has_name(structure, "buffer-filter-analysis")) {
-        guint frame_number;
-        guint64 timestamp;
-        guint buffer_size;
-        gdouble average_value;
-        
-        if (gst_structure_get_uint(structure, "frame-number", &frame_number) &&
-            gst_structure_get_uint64(structure, "timestamp", &timestamp) &&
-            gst_structure_get_uint(structure, "buffer-size", &buffer_size) &&
-            gst_structure_get_double(structure, "average-value", &average_value)) {
-          
-          if (frame_number % 30 == 0) {
-            g_print("BufferFilter: Frame #%u, Size: %u bytes, Avg value: %.2f\n", 
-                    frame_number, buffer_size, average_value);
-          }
-        }
-      }
-      break;
-    }
-    
-    default:
-      break;
   }
-  
-  return TRUE;
+
+  if (args_map.find("silent") != args_map.end()) {
+    args.SILENT = args_map["silent"] == "TRUE";
+  }
+  if (args_map.find("eye_img_path") != args_map.end()) {
+    args.EYEIMG_PATH = g_strdup(args_map["eye_img_path"].c_str());
+  } else {
+    args.EYEIMG_PATH = g_strdup("");
+  }
+  if (args_map.find("eye_img_scale") != args_map.end()) {
+    args.EYEIMG_SCALE = std::stof(args_map["eye_img_scale"]);
+  } else {
+    args.EYEIMG_SCALE = 1.0;
+  }
+  if (args_map.find("min_confidence") != args_map.end()) {
+    args.MIN_CONFIDENCE = std::stoi(args_map["min_confidence"]);
+  } else {
+    args.MIN_CONFIDENCE = 50;
+  }
+
+  return args;
 }
